@@ -9,61 +9,53 @@ const rateLimit = require("express-rate-limit");
 const app = express();
 const PORT = 3000;
 
-// ===== CONFIGURATION PROXY (IMPORTANT POUR CLOUDFLARE) =====
+// ===== PROXY =====
 app.set("trust proxy", 1);
 
-// ===== CONFIGURATION DOSSIERS =====
+// ===== DOSSIERS =====
 const STORAGE = "./storage";
 const TEMP = "./temp";
 const DB_FILE = "./files.json";
-const MAX_STORAGE = 10 * 1024 * 1024 * 1024; // 10 GB
+const MAX_STORAGE = 10 * 1024 * 1024 * 1024;
 
-// Initialisation des dossiers
+// Init dossiers
 if (!fs.existsSync(STORAGE)) fs.mkdirSync(STORAGE);
 if (!fs.existsSync(TEMP)) fs.mkdirSync(TEMP);
 
-// ===== RATE LIMITER =====
+// ===== RATE LIMIT =====
 const limiter = rateLimit({
-  windowMs: 60 * 1000, // 1 minute
-  max: 60, // Limite chaque IP à 60 requêtes par minute
+  windowMs: 60 * 1000,
+  max: 60,
   standardHeaders: true,
-  legacyHeaders: false,
-  keyGenerator: (req) => {
-    // Priorité à l'IP réelle fournie par Cloudflare
-    return req.headers["cf-connecting-ip"] || 
-           req.headers["x-forwarded-for"] || 
-           req.ip;
-  },
-  message: { error: "Trop de requêtes, attendez un peu" }
+  legacyHeaders: false
 });
 
-// Middlewares globaux
 app.use(limiter);
-app.use(express.json());
 
-// ===== CONFIGURATION UPLOAD (MULTER) =====
+//JSON PARTOUT SAUF /deploy
+app.use((req, res, next) => {
+  if (req.path === "/deploy") return next();
+  express.json()(req, res, next);
+});
+
+// ===== MULTER =====
 const upload = multer({
   dest: TEMP,
-  limits: { fileSize: 1024 * 1024 * 1024 } // Limite 1GB par fichier
+  limits: { fileSize: 1024 * 1024 * 1024 }
 });
 
-// ===== FONCTIONS UTILITAIRES DB =====
+// ===== DB =====
 function readDB() {
   if (!fs.existsSync(DB_FILE)) return {};
   try {
     return JSON.parse(fs.readFileSync(DB_FILE, "utf8"));
-  } catch (err) {
-    console.error("Erreur lecture DB:", err);
+  } catch {
     return {};
   }
 }
 
 function writeDB(data) {
-  try {
-    fs.writeFileSync(DB_FILE, JSON.stringify(data, null, 2));
-  } catch (err) {
-    console.error("Erreur écriture DB:", err);
-  }
+  fs.writeFileSync(DB_FILE, JSON.stringify(data, null, 2));
 }
 
 function generateID() {
@@ -72,27 +64,24 @@ function generateID() {
 
 function getFolderSize(folder) {
   if (!fs.existsSync(folder)) return 0;
-  const files = fs.readdirSync(folder);
-  return files.reduce((total, file) => {
+  return fs.readdirSync(folder).reduce((total, file) => {
     return total + fs.statSync(path.join(folder, file)).size;
   }, 0);
 }
 
 // ===== ROUTES =====
-
-// Santé de l'API
 app.get("/", (req, res) => {
-  res.send("BonkDrop API fonctionne comme sur des roulettes hehehe");
+  res.send("BonkDrop API fonctionne");
 });
 
-// Route d'upload
+// UPLOAD
 app.post("/upload", upload.single("file"), (req, res) => {
-  if (!req.file) return res.status(400).json({ error: "Aucun fichier reçu" });
+  if (!req.file) return res.status(400).json({ error: "No file" });
 
-  const currentSize = getFolderSize(STORAGE);
-  if (currentSize + req.file.size > MAX_STORAGE) {
-    if (fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
-    return res.status(507).json({ error: "Espace de stockage saturé" });
+  const size = getFolderSize(STORAGE);
+  if (size + req.file.size > MAX_STORAGE) {
+    fs.unlinkSync(req.file.path);
+    return res.status(507).json({ error: "Storage full" });
   }
 
   const id = generateID();
@@ -100,69 +89,71 @@ app.post("/upload", upload.single("file"), (req, res) => {
   const filename = id + ext;
   const finalPath = path.join(STORAGE, filename);
 
-  try {
-    fs.renameSync(req.file.path, finalPath);
-    
-    const db = readDB();
-    db[id] = {
-      originalName: req.file.originalname,
-      filename: filename,
-      date: new Date(),
-      size: req.file.size
-    };
-    writeDB(db);
+  fs.renameSync(req.file.path, finalPath);
 
-    res.json({ success: true, id });
-  } catch (err) {
-    console.error("Erreur lors de l'enregistrement:", err);
-    res.status(500).json({ error: "Erreur interne lors du transfert" });
-  }
+  const db = readDB();
+  db[id] = {
+    originalName: req.file.originalname,
+    filename,
+    date: new Date()
+  };
+  writeDB(db);
+
+  res.json({ success: true, id });
 });
 
-// Récupération de fichier
+// GET FILE
 app.get("/file/:id", (req, res) => {
   const db = readDB();
-  const fileData = db[req.params.id];
+  const file = db[req.params.id];
 
-  if (!fileData) return res.status(404).json({ error: "Fichier introuvable" });
+  if (!file) return res.status(404).send("Not found");
 
-  const filePath = path.resolve(path.join(STORAGE, fileData.filename));
-  if (!fs.existsSync(filePath)) return res.status(404).json({ error: "Fichier physique manquant" });
-
-  res.sendFile(filePath);
+  res.sendFile(path.resolve(path.join(STORAGE, file.filename)));
 });
 
-// Route de déploiement (Webhook)
-app.post("/deploy", (req, res) => {
-  const secret = req.headers["x-secret"];
+// ===== WEBHOOK GITHUB =====
+app.post("/deploy", express.raw({ type: "application/json" }), (req, res) => {
 
-  if (secret !== "bonkdrop_secret_tuff") {
-    return res.status(403).json({ error: "Accès refusé" });
+  const event = req.headers["x-github-event"];
+
+  // Ping GitHub
+  if (event === "ping") {
+    console.log("Ping GitHub reçu ");
+    return res.status(200).send("pong");
   }
 
-  console.log("Signal de déploiement reçu, mise à jour en cours...");
+  const signature = req.headers["x-hub-signature-256"];
+  const secret = "bonkdrop_secret_tuff";
 
-  // On répond avant de redémarrer pour éviter de laisser la connexion pendante
-  res.json({ message: "Déploiement lancé" });
+  if (!signature) {
+    return res.status(403).send("No signature");
+  }
+
+  const hmac = crypto.createHmac("sha256", secret);
+  const digest = "sha256=" + hmac.update(req.body).digest("hex");
+
+  if (signature !== digest) {
+    console.log("Signature invalide ");
+    return res.status(403).send("Invalid signature");
+  }
+
+  console.log("Webhook validé ");
+
+  res.status(200).send("Deploy lancé");
 
   exec(
     "git pull origin prod && pm2 restart bonkdrop",
     { cwd: "/home/BonkDrop/bonkdrop_site/BonkDrop-API" },
     (err, stdout, stderr) => {
-      if (err) {
-        console.error(`Erreur Deploy: ${err.message}`);
-        return;
-      }
-      if (stderr) console.error(`Stderr Deploy: ${stderr}`);
-      console.log(`Stdout Deploy: ${stdout}`);
+      if (err) return console.error(err);
+      console.log(stdout);
+      console.error(stderr);
     }
   );
 });
 
-// ===== LANCEMENT =====
+// ===== START =====
 app.listen(PORT, "0.0.0.0", () => {
-  console.log(`---`);
-  console.log(`Serveur BonkDrop lancé sur le port ${PORT}`);
-  console.log(`Mode Proxy: Actif (Trust Proxy 1)`);
-  console.log(`---`);
+  console.log("Serveur lancé sur port 3000");
 });
