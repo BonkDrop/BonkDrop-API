@@ -6,6 +6,10 @@ const crypto = require("crypto");
 const { exec } = require("child_process");
 const rateLimit = require("express-rate-limit");
 const cors = require("cors");
+const dotenv = require("dotenv");
+
+const DEFAULT_ENV_PATH = "/home/BonkDrop/bonkdrop_site/.env";
+dotenv.config({ path: process.env.ENV_FILE || DEFAULT_ENV_PATH });
 
 const app = express();
 const PORT = 3000;
@@ -199,5 +203,3 @@ app.post("/deploy", express.raw({ type: "*/*" }), (req, res) => {
 app.listen(PORT, "0.0.0.0", () => {
   console.log("BonkDrop API running on port", PORT);
 });
-
-test test cacaca
