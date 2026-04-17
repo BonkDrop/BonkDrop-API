@@ -192,7 +192,11 @@ app.post("/deploy", express.raw({ type: "*/*" }), (req, res) => {
     "git pull origin prod && pm2 restart bonkdrop",
     { cwd: "/home/BonkDrop/bonkdrop_site/BonkDrop-API" },
     (err, stdout, stderr) => {
-      if (err) console.error(err);
+      if (err) {
+        console.error(err);
+        return;
+      }
+      console.log("maj avec branche prod github fonctionne");
       if (stdout) console.log(stdout);
       if (stderr) console.error(stderr);
     }
