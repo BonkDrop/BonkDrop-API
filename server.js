@@ -189,7 +189,7 @@ app.post("/deploy", express.raw({ type: "*/*" }), (req, res) => {
   res.status(200).send("Deploy started");
 
   exec(
-    "git pull origin prod && pm2 restart bonkdrop",
+    "git pull origin prod && npm install --omit=dev && pm2 restart bonkdrop",
     { cwd: "/home/BonkDrop/bonkdrop_site/BonkDrop-API" },
     (err, stdout, stderr) => {
       if (err) {
