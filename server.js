@@ -91,7 +91,37 @@ function folderSize() {
 
 // ===================== ROUTES =====================
 app.get("/", (req, res) => {
-  res.send("BonkDrop API OK 🚀");
+  res.send("BonkDrop API OK");
+});
+
+// +++++++++++++++++++++ SECURITE FRONT +++++++++++++++++++++++
+
+app.post("/api/upload", upload.single("file"), async (req, res) => {
+  const FormData = require("form-data");
+  const fetch = require("node-fetch");
+
+  const form = new FormData();
+  form.append("file", fs.createReadStream(req.file.path));
+
+  try {
+    const response = await fetch("http://localhost:3000/upload", {
+      method: "POST",
+      headers: {
+        "x-api-key": API_KEY
+      },
+      body: form
+    });
+
+    const data = await response.json();
+
+    fs.unlinkSync(req.file.path);
+
+    res.json(data);
+
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Proxy error" });
+  }
 });
 
 // ---------------- UPLOAD ----------------
