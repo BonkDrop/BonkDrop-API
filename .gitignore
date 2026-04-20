@@ -4,3 +4,4 @@ temp/*
 files.json
 .env
 *.log
+uploads/*
