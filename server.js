@@ -9,7 +9,7 @@ const cors = require("cors");
 const dotenv = require("dotenv");
 
 // ===================== ENV =====================
-dotenv.config({ path: process.env.ENV_FILE || "/home/BonkDrop/bonkdrop_site/.env" });
+dotenv.config({ path: process.env.ENV_FILE || "/home/BonkDrop/bonkdrop_api/.env" });
 
 const app = express();
 const PORT = 3000;
@@ -198,7 +198,7 @@ app.post("/deploy", express.raw({ type: "*/*" }), (req, res) => {
   res.status(200).send("Deploy started");
 
   exec("git pull origin prod && pm2 restart bonkdrop", {
-    cwd: "/home/BonkDrop/bonkdrop_site/BonkDrop-API"
+    cwd: "/home/BonkDrop/bonkdrop_api/BonkDrop-API"
   });
 });
 

@@ -26,7 +26,7 @@ L'application stocke les fichiers dans `./storage` et les métadonnées dans `./
 
 Par défaut, le serveur charge le fichier d'environnement situé ici:
 
-`/home/BonkDrop/bonkdrop_site/.env`
+`/home/BonkDrop/bonkdrop_api/.env`
 
 Ce chemin peut être modifié selon l'emplacement de votre fichier `.env`, via la variable `ENV_FILE`.
 
