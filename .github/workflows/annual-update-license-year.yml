@@ -12,6 +12,6 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v4
-      - uses: nivmizz7/annual-update-license-year@v1
+      - uses: nivmizz7/annual-update-license-year@v1.1
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
