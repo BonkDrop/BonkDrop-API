@@ -1,0 +1,17 @@
+name: Update License Year
+
+on:
+  schedule:
+    - cron: '0 0 1 1 *'    # Run every January 1st
+  workflow_dispatch:        # Allow manual trigger
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: nivmizz7/annual-update-license-year@v1
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
