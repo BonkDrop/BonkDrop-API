@@ -92,4 +92,4 @@ Sans accord, aucune clé API n'est fournie: l'accès aux serveurs BonkDrop reste
 
 ## Licence
 
-MIT (voir `LICENSE`).
+MIT (voir [LICENSE](LICENSE)).
