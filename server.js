@@ -158,6 +158,7 @@ app.get("/:id/:token", (req, res) => {
 
   if (!fs.existsSync(filePath)) return res.status(404).send("Missing file");
 
+  res.setHeader("Content-Disposition", "inline");
   res.sendFile(path.resolve(filePath));
 });
 
