@@ -120,7 +120,7 @@ function storeUploadedFile(file, ip) {
     body: {
       id,
       token,
-      url: `/${id}/${token}`,
+      url: `https://bonkdrop.fr/${id}/${token}`,
       filename
     }
   };
