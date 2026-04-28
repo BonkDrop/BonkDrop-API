@@ -72,7 +72,7 @@ function requireApiKey(req, res, next) {
 // ===================== DB =====================
 function readDB() {
   if (!fs.existsSync(DB_FILE)) return {};
-  return JSON.parse(fs.readFileSync(DB_FILE));
+  return JSON.parse(fs.readFileSync(DB_FILE, "utf8"));
 }
 
 function writeDB(data) {
@@ -89,75 +89,59 @@ function folderSize() {
   }, 0);
 }
 
-// ===================== ROUTES =====================
-app.get("/", (req, res) => {
-  res.send("BonkDrop API OK");
-});
-
-// +++++++++++++++++++++ SECURITE FRONT +++++++++++++++++++++++
-
-app.post("/api/upload", upload.single("file"), async (req, res) => {
-  const FormData = require("form-data");
-  const fetch = require("node-fetch");
-
-  const form = new FormData();
-  form.append("file", fs.createReadStream(req.file.path));
-
-  try {
-    const response = await fetch("http://localhost:3000/upload", {
-      method: "POST",
-      headers: {
-        "x-api-key": API_KEY
-      },
-      body: form
-    });
-
-    const data = await response.json();
-
-    fs.unlinkSync(req.file.path);
-
-    res.json(data);
-
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "Proxy error" });
+function storeUploadedFile(file, ip) {
+  if (!file) {
+    return { status: 400, body: { error: "No file" } };
   }
-});
 
-// ---------------- UPLOAD ----------------
-app.post("/upload", requireApiKey, upload.single("file"), (req, res) => {
-
-  if (!req.file) return res.status(400).json({ error: "No file" });
-
-  if (folderSize() + req.file.size > MAX_STORAGE) {
-    fs.unlinkSync(req.file.path);
-    return res.status(507).json({ error: "Storage full" });
+  if (folderSize() + file.size > MAX_STORAGE) {
+    fs.unlinkSync(file.path);
+    return { status: 507, body: { error: "Storage full" } };
   }
 
   const id = generateID();
   const token = crypto.randomBytes(16).toString("hex");
-
-  const ext = path.extname(req.file.originalname);
+  const ext = path.extname(file.originalname);
   const filename = id + ext;
 
-  fs.renameSync(req.file.path, path.join(STORAGE, filename));
+  fs.renameSync(file.path, path.join(STORAGE, filename));
 
   const db = readDB();
-
   db[id] = {
     filename,
     token,
-    createdAt: Date.now(),
-    expiresAt: Date.now() + 24 * 60 * 60 * 1000
+    ip,
+    createdAt: Date.now()
   };
-
   writeDB(db);
 
-  res.json({
-    success: true,
-    url: `https://bonkdrop.fr/${id}/${token}`,
-    expiresAt: db[id].expiresAt
-  });
+  return {
+    status: 200,
+    body: {
+      id,
+      token,
+      url: `/${id}/${token}`,
+      filename
+    }
+  };
+}
+
+// ===================== ROUTES =====================
+// accueil
+app.get("/", (req, res) => {
+  res.send("BonkDrop API OK");
+});
+// +++++++++++++++++++++ SECURITE FRONT +++++++++++++++++++++++
+
+app.post("/api/upload", upload.single("file"), (req, res) => {
+  const result = storeUploadedFile(req.file, req.ip);
+  return res.status(result.status).json(result.body);
+});
+
+// ---------------- UPLOAD ----------------
+app.post("/upload", requireApiKey, upload.single("file"), (req, res) => {
+  const result = storeUploadedFile(req.file, req.ip);
+  return res.status(result.status).json(result.body);
 });
 
 // ---------------- DOWNLOAD ----------------
@@ -169,13 +153,33 @@ app.get("/:id/:token", (req, res) => {
 
   if (!file) return res.status(404).send("Not found");
   if (file.token !== token) return res.status(403).send("Invalid token");
-  if (Date.now() > file.expiresAt) return res.status(410).send("Expired");
 
   const filePath = path.join(STORAGE, file.filename);
 
   if (!fs.existsSync(filePath)) return res.status(404).send("Missing file");
 
   res.sendFile(path.resolve(filePath));
+});
+
+// ---------------- DELETE ----------------
+app.delete("/delete/:id/:token", (req, res) => {
+  const { id, token } = req.params;
+  const db = readDB();
+  const file = db[id];
+
+  if (!file) return res.status(404).json({ error: "Not found" });
+  if (file.token !== token) return res.status(403).json({ error: "Invalid token" });
+
+  const filePath = path.join(STORAGE, file.filename);
+
+  if (fs.existsSync(filePath)) {
+    fs.unlinkSync(filePath);
+  }
+
+  delete db[id];
+  writeDB(db);
+
+  return res.json({ success: true });
 });
 
 // ---------------- WEBHOOK ----------------
@@ -191,7 +195,13 @@ app.post("/deploy", express.raw({ type: "*/*" }), (req, res) => {
     "sha256=" +
     crypto.createHmac("sha256", GITHUB_SECRET).update(req.body).digest("hex");
 
-  if (!crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(digest))) {
+  const signatureBuffer = Buffer.from(signature);
+  const digestBuffer = Buffer.from(digest);
+
+  if (
+    signatureBuffer.length !== digestBuffer.length ||
+    !crypto.timingSafeEqual(signatureBuffer, digestBuffer)
+  ) {
     return res.status(403).send("Invalid signature");
   }
 
@@ -205,19 +215,22 @@ app.post("/deploy", express.raw({ type: "*/*" }), (req, res) => {
 // ---------------- CLEANUP ----------------
 setInterval(() => {
   const db = readDB();
-  const now = Date.now();
   let changed = false;
 
   for (const id in db) {
-    if (now > db[id].expiresAt) {
-      const filePath = path.join(STORAGE, db[id].filename);
-      if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+    const file = db[id];
+    const filePath = path.join(STORAGE, file.filename);
+
+    // supprime juste les entrées cassées
+    if (!fs.existsSync(filePath)) {
       delete db[id];
       changed = true;
+      console.log("Clean DB:", id);
     }
   }
 
   if (changed) writeDB(db);
+
 }, 60 * 60 * 1000);
 
 // ===================== START =====================
