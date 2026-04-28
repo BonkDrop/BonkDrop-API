@@ -72,7 +72,11 @@ function requireApiKey(req, res, next) {
 // ===================== DB =====================
 function readDB() {
   if (!fs.existsSync(DB_FILE)) return {};
-  return JSON.parse(fs.readFileSync(DB_FILE, "utf8"));
+  try {
+    return JSON.parse(fs.readFileSync(DB_FILE, "utf8"));
+  } catch {
+    return {};
+  }
 }
 
 function writeDB(data) {
@@ -87,6 +91,20 @@ function folderSize() {
   return fs.readdirSync(STORAGE).reduce((a, f) => {
     return a + fs.statSync(path.join(STORAGE, f)).size;
   }, 0);
+}
+
+function collectUploadedFiles(req) {
+  const files = [];
+
+  if (req.file) {
+    files.push(req.file);
+  }
+
+  if (Array.isArray(req.files)) {
+    files.push(...req.files);
+  }
+
+  return files.filter((file) => file && (file.fieldname === "file" || file.fieldname === "files"));
 }
 
 function storeUploadedFile(file, ip) {
@@ -133,15 +151,55 @@ app.get("/", (req, res) => {
 });
 // +++++++++++++++++++++ SECURITE FRONT +++++++++++++++++++++++
 
-app.post("/api/upload", upload.single("file"), (req, res) => {
-  const result = storeUploadedFile(req.file, req.ip);
-  return res.status(result.status).json(result.body);
+app.post("/api/upload", upload.array("files", 10), (req, res) => {
+  const files = collectUploadedFiles(req);
+
+  if (files.length === 0) {
+    return res.status(400).json({ error: "No file" });
+  }
+
+  const result = [];
+
+  for (const file of files) {
+    const stored = storeUploadedFile(file, req.ip);
+    if (stored.status !== 200) {
+      return res.status(stored.status).json(stored.body);
+    }
+    result.push(stored.body);
+  }
+
+  return res.json({ success: true, files: result });
 });
 
 // ---------------- UPLOAD ----------------
-app.post("/upload", requireApiKey, upload.single("file"), (req, res) => {
-  const result = storeUploadedFile(req.file, req.ip);
-  return res.status(result.status).json(result.body);
+app.post("/upload", requireApiKey, upload.array("files", 10), (req, res) => {
+  const files = collectUploadedFiles(req);
+
+  if (files.length === 0) {
+    return res.status(400).json({ error: "No file" });
+  }
+
+  const totalSize = files.reduce((sum, file) => sum + file.size, 0);
+
+  if (folderSize() + totalSize > MAX_STORAGE) {
+    files.forEach((file) => fs.unlinkSync(file.path));
+    return res.status(507).json({ error: "Storage full" });
+  }
+
+  const results = [];
+
+  for (const file of files) {
+    const stored = storeUploadedFile(file, req.ip);
+    if (stored.status !== 200) {
+      return res.status(stored.status).json(stored.body);
+    }
+    results.push(stored.body);
+  }
+
+  return res.json({
+    success: true,
+    files: results
+  });
 });
 
 // ---------------- DOWNLOAD ----------------
