@@ -1,6 +1,6 @@
 # BonkDrop-API
 
-API simple pour uploader et servir des fichiers, avec support du déploiement via webhook GitHub.
+BonkDrop-API est une API (mécanismes qui permettent à deux composants logiciels de communiquer entre eux à l'aide d'un ensemble de définitions et de protocoles) simple pour uploader et servir des fichiers, avec support du déploiement via webhook GitHub. Il a été crée pour le site web Bonkdrop (https://bonkdrop.fr/), mais le code source est disponible ici, sur Github.
 
 ## Fonctionnement
 
