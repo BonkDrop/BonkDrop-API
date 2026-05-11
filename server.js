@@ -46,9 +46,9 @@ app.use((req, res, next) => {
 });
 
 // ===================== STORAGE =====================
-const STORAGE = "./storage";
-const TEMP = "./temp";
-const DB_FILE = "./files.json";
+const STORAGE = "/home/BonkDrop/bonkdrop_data/storage";
+const TEMP = "/home/BonkDrop/temp";
+const DB_FILE = "/home/BonkDrop/bonkdrop_data/files.json";
 const MAX_STORAGE = 10 * 1024 * 1024 * 1024;
 
 if (!fs.existsSync(STORAGE)) fs.mkdirSync(STORAGE);

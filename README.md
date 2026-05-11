@@ -4,20 +4,23 @@ BonkDrop-API est une API (mécanismes qui permettent à deux composants logiciel
 
 ## Fonctionnement
 
-- `POST /upload`: upload un fichier (champ `file`) et retourne un identifiant court.
-- `GET /file/:id`: retourne le fichier lié à cet identifiant.
-- `POST /deploy`: vérifie la signature du webhook GitHub puis lance la commande de déploiement.
+- `POST /api/upload`: upload depuis le front (pas de `x-api-key` nécessaire), accepte `files` (multipart, max 10 fichiers).
+- `POST /upload`: upload côté API (nécessite le header `x-api-key`), accepte `files` (multipart, max 10 fichiers).
+- `GET /:id/:token`: téléchargement public si le `token` correspond à l'entrée en base.
+- `DELETE /delete/:id/:token`: supprime le fichier si le `token` est valide.
+- `POST /deploy`: vérifie la signature du webhook GitHub puis lance la commande de déploiement (`git pull` + `pm2 restart`).
 - `GET /`: route de vérification (health check).
 
-L'application stocke les fichiers dans `./storage` et les métadonnées dans `./files.json`.
+L'application stocke les fichiers dans `./storage`, les temporaires dans `./temp`, et les métadonnées dans `./files.json`.
 
 ## Modèle de sécurité
 
-- L'endpoint d'upload est protégé par le header `x-api-key`.
+- L'endpoint `POST /upload` est protégé par le header `x-api-key`. `POST /api/upload` est destiné au front et n'utilise pas la clé API.
 - L'endpoint de déploiement est protégé par la signature HMAC GitHub (`x-hub-signature-256`).
 - Un rate limit global est activé.
-- Taille maximale par fichier: 2 Go.
-- Stockage total maximal: 10 Go.
+-- Taille maximale par fichier: 2 Go.
+-- Stockage total maximal: 10 Go.
+-- Rétention: les fichiers restent indéfiniment tant qu'ils ne sont pas supprimés manuellement. Aucune suppression automatique par âge n'est en place.
 
 ## Variables d'environnement requises
 
@@ -47,6 +50,8 @@ set +a
 npm start
 ```
 
+Note: le serveur écoute par défaut sur le port `3000` et refuse de démarrer si `API_KEY` ou `GITHUB_SECRET` sont absents.
+
 ## Exemples d'utilisation de l'API
 
 Uploader un fichier:
@@ -66,10 +71,16 @@ Réponse:
 }
 ```
 
-Télécharger un fichier:
+Télécharger un fichier (exemple):
 
 ```bash
-curl -O http://localhost:3000/file/a1b2c3d4e5f6
+curl -O http://localhost:3000/<id>/<token>
+```
+
+Supprimer un fichier (exemple):
+
+```bash
+curl -X DELETE http://localhost:3000/delete/<id>/<token>
 ```
 
 ## Flux du webhook de déploiement
@@ -81,6 +92,10 @@ git pull origin prod && pm2 restart bonkdrop
 ```
 
 En production sur Raspberry Pi, conservez les secrets hors Git (ou dans des fichiers ignorés), et assurez-vous que PM2 reçoit les variables d'environnement au redémarrage (par exemple via une config PM2 avec `env`, ou `pm2 restart --update-env`).
+
+## Entretien automatique
+
+Une tâche planifiée s'exécute toutes les heures et nettoie uniquement les entrées de `files.json` dont le fichier correspondant est déjà manquant sur le disque. Elle ne supprime pas les fichiers en fonction de leur âge.
 
 ## Conditions d'utilisation
 
