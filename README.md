@@ -4,8 +4,8 @@ BonkDrop-API est une API (mécanismes qui permettent à deux composants logiciel
 
 ## Fonctionnement
 
-- `POST /api/upload`: upload depuis le front (pas de `x-api-key` nécessaire), accepte `files` (multipart, max 10 fichiers).
-- `POST /upload`: upload côté API (nécessite le header `x-api-key`), accepte `files` (multipart, max 10 fichiers).
+- `POST /api/upload`: upload depuis le front (pas de `x-api-key` nécessaire), accepte `file` ou `files` (multipart, max 10 fichiers).
+- `POST /upload`: upload côté API (nécessite le header `x-api-key`), accepte `file` ou `files` (multipart, max 10 fichiers).
 - `GET /:id/:token`: téléchargement public si le `token` correspond à l'entrée en base.
 - `DELETE /delete/:id/:token`: supprime le fichier si le `token` est valide.
 - `POST /deploy`: vérifie la signature du webhook GitHub puis lance la commande de déploiement (`git pull` + `pm2 restart`).
@@ -26,6 +26,7 @@ L'application stocke les fichiers dans `./storage`, les temporaires dans `./temp
 
 - `API_KEY`: valeur attendue dans `x-api-key` pour `POST /upload`.
 - `GITHUB_SECRET`: utilisée pour valider la signature du webhook GitHub.
+- `CORS_ORIGINS` (optionnelle): liste d'origines autorisées séparées par des virgules. Si absente, la liste par défaut inclut `https://bonkdrop.fr`, `https://www.bonkdrop.fr`, `http://localhost:3000`, `http://localhost:5173`.
 
 Par défaut, le serveur charge le fichier d'environnement situé ici:
 
@@ -38,6 +39,7 @@ Exemple de contenu pour ce fichier `.env`:
 ```env
 API_KEY=your_long_random_api_key
 GITHUB_SECRET=your_webhook_secret
+CORS_ORIGINS=https://bonkdrop.fr,https://www.bonkdrop.fr,http://localhost:5173
 ```
 
 ## Démarrage en local

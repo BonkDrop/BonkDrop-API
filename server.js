@@ -16,6 +16,7 @@ const PORT = 3000;
 
 const API_KEY = process.env.API_KEY;
 const GITHUB_SECRET = process.env.GITHUB_SECRET;
+const CORS_ORIGINS = process.env.CORS_ORIGINS;
 
 if (!API_KEY || !GITHUB_SECRET) {
   console.error("Missing env vars");
@@ -25,13 +26,24 @@ if (!API_KEY || !GITHUB_SECRET) {
 // ===================== SECURITY =====================
 app.set("trust proxy", 1);
 
+const defaultAllowedOrigins = [
+  "https://bonkdrop.fr",
+  "https://www.bonkdrop.fr",
+  "http://localhost:3000",
+  "http://localhost:5173"
+];
+
+const allowedOrigins = CORS_ORIGINS
+  ? CORS_ORIGINS.split(",").map((origin) => origin.trim()).filter(Boolean)
+  : defaultAllowedOrigins;
+
 app.use(cors({
-  origin: [
-    "https://bonkdrop.fr",
-    "https://www.bonkdrop.fr",
-    "http://localhost:3000",
-    "http://localhost:5173"
-  ]
+  origin(origin, callback) {
+    if (!origin || allowedOrigins.includes(origin)) {
+      return callback(null, true);
+    }
+    return callback(new Error("Not allowed by CORS"));
+  }
 }));
 
 app.use(rateLimit({
@@ -59,6 +71,11 @@ const upload = multer({
   dest: TEMP,
   limits: { fileSize: 2 * 1024 * 1024 * 1024 } // 2GB
 });
+
+const uploadFields = upload.fields([
+  { name: "files", maxCount: 10 },
+  { name: "file", maxCount: 10 }
+]);
 
 // ===================== AUTH =====================
 function requireApiKey(req, res, next) {
@@ -102,6 +119,15 @@ function collectUploadedFiles(req) {
 
   if (Array.isArray(req.files)) {
     files.push(...req.files);
+  }
+
+  if (req.files && !Array.isArray(req.files) && typeof req.files === "object") {
+    for (const key of Object.keys(req.files)) {
+      const value = req.files[key];
+      if (Array.isArray(value)) {
+        files.push(...value);
+      }
+    }
   }
 
   return files.filter((file) => file && (file.fieldname === "file" || file.fieldname === "files"));
@@ -151,7 +177,7 @@ app.get("/", (req, res) => {
 });
 // +++++++++++++++++++++ SECURITE FRONT +++++++++++++++++++++++
 
-app.post("/api/upload", upload.array("files", 10), (req, res) => {
+app.post("/api/upload", uploadFields, (req, res) => {
   const files = collectUploadedFiles(req);
 
   if (files.length === 0) {
@@ -172,7 +198,7 @@ app.post("/api/upload", upload.array("files", 10), (req, res) => {
 });
 
 // ---------------- UPLOAD ----------------
-app.post("/upload", requireApiKey, upload.array("files", 10), (req, res) => {
+app.post("/upload", requireApiKey, uploadFields, (req, res) => {
   const files = collectUploadedFiles(req);
 
   if (files.length === 0) {
@@ -291,6 +317,24 @@ setInterval(() => {
   if (changed) writeDB(db);
 
 }, 60 * 60 * 1000);
+
+app.use((err, req, res, next) => {
+  if (err instanceof multer.MulterError) {
+    if (err.code === "LIMIT_FILE_SIZE") {
+      return res.status(413).json({ error: "File too large (max 2GB)" });
+    }
+    if (err.code === "LIMIT_UNEXPECTED_FILE") {
+      return res.status(400).json({ error: "Invalid file field, use file or files" });
+    }
+    return res.status(400).json({ error: err.message });
+  }
+
+  if (err && err.message === "Not allowed by CORS") {
+    return res.status(403).json({ error: "Origin not allowed" });
+  }
+
+  return next(err);
+});
 
 // ===================== START =====================
 app.listen(PORT, "0.0.0.0", () => {
