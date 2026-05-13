@@ -58,13 +58,13 @@ app.use((req, res, next) => {
 });
 
 // ===================== STORAGE =====================
-const STORAGE = "/home/BonkDrop/bonkdrop_data/storage";
-const TEMP = "/home/BonkDrop/temp";
-const DB_FILE = "/home/BonkDrop/bonkdrop_data/files.json";
+const STORAGE = process.env.STORAGE_PATH || "./storage";
+const TEMP = process.env.TEMP_PATH || "./temp";
+const DB_FILE = process.env.DB_FILE_PATH || "./files.json";
 const MAX_STORAGE = 10 * 1024 * 1024 * 1024;
 
-if (!fs.existsSync(STORAGE)) fs.mkdirSync(STORAGE);
-if (!fs.existsSync(TEMP)) fs.mkdirSync(TEMP);
+if (!fs.existsSync(STORAGE)) fs.mkdirSync(STORAGE, { recursive: true });
+if (!fs.existsSync(TEMP)) fs.mkdirSync(TEMP, { recursive: true });
 
 // ===================== MULTER =====================
 const upload = multer({

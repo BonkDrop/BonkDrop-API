@@ -26,6 +26,12 @@ L'application stocke les fichiers dans `./storage`, les temporaires dans `./temp
 
 - `API_KEY`: valeur attendue dans `x-api-key` pour `POST /upload`.
 - `GITHUB_SECRET`: utilisée pour valider la signature du webhook GitHub.
+
+Variables optionnelles:
+
+- `STORAGE_PATH` (défaut: `./storage`): chemin du répertoire de stockage des fichiers.
+- `TEMP_PATH` (défaut: `./temp`): chemin du répertoire temporaire pour les uploads en cours.
+- `DB_FILE_PATH` (défaut: `./files.json`): chemin du fichier de base de données des métadonnées.
 - `CORS_ORIGINS` (optionnelle): liste d'origines autorisées séparées par des virgules. Si absente, la liste par défaut inclut `https://bonkdrop.fr`, `https://www.bonkdrop.fr`, `http://localhost:3000`, `http://localhost:5173`.
 
 Par défaut, le serveur charge le fichier d'environnement situé ici:
