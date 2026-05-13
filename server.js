@@ -72,11 +72,6 @@ const upload = multer({
   limits: { fileSize: 2 * 1024 * 1024 * 1024 } // 2GB
 });
 
-const uploadFields = upload.fields([
-  { name: "files", maxCount: 10 },
-  { name: "file", maxCount: 10 }
-]);
-
 // ===================== AUTH =====================
 function requireApiKey(req, res, next) {
   const key = req.headers["x-api-key"];
@@ -110,64 +105,42 @@ function folderSize() {
   }, 0);
 }
 
-function collectUploadedFiles(req) {
-  const files = [];
-
-  if (req.file) {
-    files.push(req.file);
+function handleUpload(req, res) {
+  if (!req.file) {
+    return res.status(400).json({ error: "No file" });
   }
 
-  if (Array.isArray(req.files)) {
-    files.push(...req.files);
-  }
-
-  if (req.files && !Array.isArray(req.files) && typeof req.files === "object") {
-    for (const key of Object.keys(req.files)) {
-      const value = req.files[key];
-      if (Array.isArray(value)) {
-        files.push(...value);
-      }
-    }
-  }
-
-  return files.filter((file) => file && (file.fieldname === "file" || file.fieldname === "files"));
-}
-
-function storeUploadedFile(file, ip) {
-  if (!file) {
-    return { status: 400, body: { error: "No file" } };
-  }
-
-  if (folderSize() + file.size > MAX_STORAGE) {
-    fs.unlinkSync(file.path);
-    return { status: 507, body: { error: "Storage full" } };
+  if (folderSize() + req.file.size > MAX_STORAGE) {
+    fs.unlinkSync(req.file.path);
+    return res.status(507).json({ error: "Storage full" });
   }
 
   const id = generateID();
   const token = crypto.randomBytes(16).toString("hex");
-  const ext = path.extname(file.originalname);
+
+  const ext = path.extname(req.file.originalname);
   const filename = id + ext;
 
-  fs.renameSync(file.path, path.join(STORAGE, filename));
+  fs.renameSync(req.file.path, path.join(STORAGE, filename));
 
   const db = readDB();
+
   db[id] = {
     filename,
     token,
-    ip,
-    createdAt: Date.now()
+    createdAt: Date.now(),
+    uploaderIp: req.ip
   };
+
   writeDB(db);
 
-  return {
-    status: 200,
-    body: {
-      id,
-      token,
-      url: `https://bonkdrop.fr/${id}/${token}`,
-      filename
-    }
-  };
+  return res.json({
+    success: true,
+    id,
+    token,
+    url: `https://bonkdrop.fr/${id}/${token}`,
+    filename
+  });
 }
 
 // ===================== ROUTES =====================
@@ -177,56 +150,10 @@ app.get("/", (req, res) => {
 });
 // +++++++++++++++++++++ SECURITE FRONT +++++++++++++++++++++++
 
-app.post("/api/upload", uploadFields, (req, res) => {
-  const files = collectUploadedFiles(req);
-
-  if (files.length === 0) {
-    return res.status(400).json({ error: "No file" });
-  }
-
-  const result = [];
-
-  for (const file of files) {
-    const stored = storeUploadedFile(file, req.ip);
-    if (stored.status !== 200) {
-      return res.status(stored.status).json(stored.body);
-    }
-    result.push(stored.body);
-  }
-
-  return res.json({ success: true, files: result });
-});
+app.post("/api/upload", upload.single("file"), handleUpload);
 
 // ---------------- UPLOAD ----------------
-app.post("/upload", requireApiKey, uploadFields, (req, res) => {
-  const files = collectUploadedFiles(req);
-
-  if (files.length === 0) {
-    return res.status(400).json({ error: "No file" });
-  }
-
-  const totalSize = files.reduce((sum, file) => sum + file.size, 0);
-
-  if (folderSize() + totalSize > MAX_STORAGE) {
-    files.forEach((file) => fs.unlinkSync(file.path));
-    return res.status(507).json({ error: "Storage full" });
-  }
-
-  const results = [];
-
-  for (const file of files) {
-    const stored = storeUploadedFile(file, req.ip);
-    if (stored.status !== 200) {
-      return res.status(stored.status).json(stored.body);
-    }
-    results.push(stored.body);
-  }
-
-  return res.json({
-    success: true,
-    files: results
-  });
-});
+app.post("/upload", requireApiKey, upload.single("file"), handleUpload);
 
 // ---------------- DOWNLOAD ----------------
 app.get("/:id/:token", (req, res) => {
