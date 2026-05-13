@@ -58,9 +58,9 @@ app.use((req, res, next) => {
 });
 
 // ===================== STORAGE =====================
-const STORAGE = process.env.STORAGE_PATH || "~/bonkdrop_site/storage";
-const TEMP = process.env.TEMP_PATH || "~/bonkdrop_site/temp";
-const DB_FILE = process.env.DB_FILE_PATH || "~/bonkdrop_site/bonkdrop_datafiles.json";
+const STORAGE = process.env.STORAGE_PATH || "~/bonkdrop_site/bonkdrop_data/storage";
+const TEMP = process.env.TEMP_PATH || "~/bonkdrop_site/bonkdrop_data/temp";
+const DB_FILE = process.env.DB_FILE_PATH || "~/bonkdrop_site/bonkdrop_data/files.json";
 const MAX_STORAGE = 10 * 1024 * 1024 * 1024;
 
 if (!fs.existsSync(STORAGE)) fs.mkdirSync(STORAGE, { recursive: true });
