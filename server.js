@@ -64,9 +64,9 @@ function expandHome(p) {
   return p.replace(/^~(?=$|\/|\\)/, os.homedir());
 }
 
-const STORAGE = expandHome(process.env.STORAGE_PATH || path.resolve("./storage"));
-const TEMP = expandHome(process.env.TEMP_PATH || path.resolve("./temp"));
-const DB_FILE = expandHome(process.env.DB_FILE_PATH || path.resolve("./files.json"));
+const STORAGE = expandHome(process.env.STORAGE_PATH || path.resolve("~/bonkdrop_data/storage"));
+const TEMP = expandHome(process.env.TEMP_PATH || path.resolve("~/bonkdrop_data/temp"));
+const DB_FILE = expandHome(process.env.DB_FILE_PATH || path.resolve("~/bonkdrop_data/files.json"));
 const MAX_STORAGE = 10 * 1024 * 1024 * 1024;
 
 if (!fs.existsSync(STORAGE)) fs.mkdirSync(STORAGE, { recursive: true });
