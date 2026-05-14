@@ -4,6 +4,7 @@ const fs = require("fs");
 const path = require("path");
 const crypto = require("crypto");
 const { exec } = require("child_process");
+const os = require("os");
 const rateLimit = require("express-rate-limit");
 const cors = require("cors");
 const dotenv = require("dotenv");
@@ -58,9 +59,14 @@ app.use((req, res, next) => {
 });
 
 // ===================== STORAGE =====================
-const STORAGE = process.env.STORAGE_PATH || "~/bonkdrop_site/bonkdrop_data/storage";
-const TEMP = process.env.TEMP_PATH || "~/bonkdrop_site/bonkdrop_data/temp";
-const DB_FILE = process.env.DB_FILE_PATH || "~/bonkdrop_site/bonkdrop_data/files.json";
+function expandHome(p) {
+  if (typeof p !== "string") return p;
+  return p.replace(/^~(?=$|\/|\\)/, os.homedir());
+}
+
+const STORAGE = expandHome(process.env.STORAGE_PATH || path.resolve("./storage"));
+const TEMP = expandHome(process.env.TEMP_PATH || path.resolve("./temp"));
+const DB_FILE = expandHome(process.env.DB_FILE_PATH || path.resolve("./files.json"));
 const MAX_STORAGE = 10 * 1024 * 1024 * 1024;
 
 if (!fs.existsSync(STORAGE)) fs.mkdirSync(STORAGE, { recursive: true });
@@ -71,6 +77,15 @@ const upload = multer({
   dest: TEMP,
   limits: { fileSize: 2 * 1024 * 1024 * 1024 } // 2GB
 });
+
+// Log des uploads pour debug (content-type et endpoint) a retirer en prod si pas nécessaire
+app.use((req, res, next) => {
+  if (req.path === "/api/upload" || req.path === "/upload") {
+    console.log(`[${req.path}] Content-Type:`, req.headers["content-type"]);
+  }
+  next();
+});
+
 
 // ===================== AUTH =====================
 function requireApiKey(req, res, next) {
@@ -251,7 +266,8 @@ app.use((err, req, res, next) => {
       return res.status(413).json({ error: "File too large (max 2GB)" });
     }
     if (err.code === "LIMIT_UNEXPECTED_FILE") {
-      return res.status(400).json({ error: "Invalid file field, use file or files" });
+      console.error(`[ERROR] LIMIT_UNEXPECTED_FILE on ${req.path}:`, err.field, "- expected 'file'");
+      return res.status(400).json({ error: "Invalid file field, expected 'file'" });
     }
     return res.status(400).json({ error: err.message });
   }
