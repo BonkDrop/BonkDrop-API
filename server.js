@@ -10,7 +10,7 @@ const cors = require("cors");
 const dotenv = require("dotenv");
 
 // ===================== ENV =====================
-dotenv.config({ path: process.env.ENV_FILE || "/home/BonkDrop/bonkdrop_site/.env" });
+dotenv.config({ path: process.env.ENV_FILE || "/home/BonkDrop/bonkdrop_backend/.env" });
 
 const app = express();
 const PORT = 3000;
