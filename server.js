@@ -121,40 +121,59 @@ function folderSize() {
 }
 
 function handleUpload(req, res) {
-  if (!req.file) {
-    return res.status(400).json({ error: "No file" });
+
+  if (!req.files || req.files.length === 0) {
+    return res.status(400).json({ error: "No files" });
   }
 
-  if (folderSize() + req.file.size > MAX_STORAGE) {
-    fs.unlinkSync(req.file.path);
+  const totalUploadSize = req.files.reduce((total, file) => {
+    return total + file.size;
+  }, 0);
+
+  if (folderSize() + totalUploadSize > MAX_STORAGE) {
+
+    for (const file of req.files) {
+      if (fs.existsSync(file.path)) {
+        fs.unlinkSync(file.path);
+      }
+    }
+
     return res.status(507).json({ error: "Storage full" });
   }
 
-  const id = generateID();
-  const token = crypto.randomBytes(16).toString("hex");
-
-  const ext = path.extname(req.file.originalname);
-  const filename = id + ext;
-
-  fs.renameSync(req.file.path, path.join(STORAGE, filename));
-
   const db = readDB();
+  const uploadedFiles = [];
 
-  db[id] = {
-    filename,
-    token,
-    createdAt: Date.now(),
-    uploaderIp: req.ip
-  };
+  for (const file of req.files) {
+
+    const id = generateID();
+    const token = crypto.randomBytes(16).toString("hex");
+
+    const ext = path.extname(file.originalname);
+    const filename = id + ext;
+
+    fs.renameSync(file.path, path.join(STORAGE, filename));
+
+    db[id] = {
+      filename,
+      token,
+      createdAt: Date.now(),
+      uploaderIp: req.ip
+    };
+
+    uploadedFiles.push({
+      id,
+      token,
+      url: `https://bonkdrop.fr/${id}/${token}`,
+      filename
+    });
+  }
 
   writeDB(db);
 
   return res.json({
     success: true,
-    id,
-    token,
-    url: `https://bonkdrop.fr/${id}/${token}`,
-    filename
+    files: uploadedFiles
   });
 }
 
@@ -165,10 +184,12 @@ app.get("/", (req, res) => {
 });
 // +++++++++++++++++++++ SECURITE FRONT +++++++++++++++++++++++
 
-app.post("/api/upload", upload.single("file"), handleUpload);
+app.post("/api/upload", upload.array("file", 1000), handleUpload);
 
 // ---------------- UPLOAD ----------------
-app.post("/upload", requireApiKey, upload.single("file"), handleUpload);
+app.post("/api/upload", upload.array("file", 1000), handleUpload);
+
+app.post("/upload", requireApiKey, upload.array("file", 1000), handleUpload);
 
 // ---------------- DOWNLOAD ----------------
 app.get("/:id/:token", (req, res) => {
