@@ -182,6 +182,14 @@ function handleUpload(req, res) {
 app.get("/", (req, res) => {
   res.send("BonkDrop API OK");
 });
+
+app.get("/health", (req, res) => {
+  res.status(200).json({
+    status: "ok",
+    time: Date.now()
+  });
+});
+
 // +++++++++++++++++++++ SECURITE FRONT +++++++++++++++++++++++
 
 app.post("/api/upload", upload.array("file", 1000), handleUpload);
