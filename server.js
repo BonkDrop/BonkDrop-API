@@ -114,6 +114,10 @@ function generateID() {
   return crypto.randomBytes(6).toString("hex");
 }
 
+function formatDate() {
+  return new Date().toLocaleString("fr-FR");
+}
+
 function folderSize() {
   return fs.readdirSync(STORAGE).reduce((a, f) => {
     return a + fs.statSync(path.join(STORAGE, f)).size;
@@ -121,8 +125,8 @@ function folderSize() {
 }
 
 function handleUpload(req, res) {
-
-  if (!req.files || req.files.length === 0) {
+  const uploadId = generateID();
+    if (!req.files || req.files.length === 0) {
     return res.status(400).json({ error: "No files" });
   }
 
@@ -146,20 +150,27 @@ function handleUpload(req, res) {
 
   for (const file of req.files) {
 
-    const id = generateID();
     const token = crypto.randomBytes(16).toString("hex");
 
     const ext = path.extname(file.originalname);
-    const filename = id + ext;
+    const filename = crypto.randomBytes(6).toString("hex") + ext;
 
     fs.renameSync(file.path, path.join(STORAGE, filename));
 
-    db[id] = {
-      filename,
-      token,
-      createdAt: Date.now(),
-      uploaderIp: req.ip
-    };
+  if (!db[uploadId]) {
+  db[uploadId] = {
+    token,
+    createdAt: formatDate(),
+    uploaderIp: req.ip,
+    files: []
+  };
+}
+
+db[uploadId].files.push({
+  filename,
+  originalName: file.originalname,
+  size: file.size
+});
 
     uploadedFiles.push({
       id,
@@ -172,9 +183,11 @@ function handleUpload(req, res) {
   writeDB(db);
 
   return res.json({
-    success: true,
-    files: uploadedFiles
-  });
+  success: true,
+  uploadId,
+  token,
+  url: `https://bonkdrop.fr/${uploadId}/${token}`
+});
 }
 
 // ===================== ROUTES =====================
