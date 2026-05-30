@@ -3,6 +3,7 @@ const multer = require("multer");
 const fs = require("fs");
 const path = require("path");
 const crypto = require("crypto");
+const archiver = require("archiver");
 const { exec } = require("child_process");
 const os = require("os");
 const rateLimit = require("express-rate-limit");
@@ -115,7 +116,16 @@ function generateID() {
 }
 
 function formatDate() {
-  return new Date().toLocaleString("fr-FR");
+  const now = new Date();
+
+  return now.toLocaleString("fr-FR", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit"
+  });
 }
 
 function folderSize() {
@@ -125,8 +135,7 @@ function folderSize() {
 }
 
 function handleUpload(req, res) {
-  const uploadId = generateID();
-    if (!req.files || req.files.length === 0) {
+  if (!req.files || req.files.length === 0) {
     return res.status(400).json({ error: "No files" });
   }
 
@@ -145,183 +154,212 @@ function handleUpload(req, res) {
     return res.status(507).json({ error: "Storage full" });
   }
 
-  const db = readDB();
-  const uploadedFiles = [];
+  const uploadId = generateID();
+  const token = crypto.randomBytes(16).toString("hex");
+
+  const zipFilename = `${uploadId}.zip`;
+  const zipPath = path.join(STORAGE, zipFilename);
+
+  const output = fs.createWriteStream(zipPath);
+
+  const archive = archiver("zip", {
+    zlib: { level: 9 }
+  });
+
+  let alreadyAnswered = false;
+
+  output.on("close", () => {
+    if (alreadyAnswered) return;
+    alreadyAnswered = true;
+    const db = readDB();
+    for (const file of req.files) {
+      if (fs.existsSync(file.path)) {
+        fs.unlinkSync(file.path);
+      }
+    }
+
+    db[uploadId] = {
+      filename: zipFilename,
+      token,
+      createdAt: formatDate(),
+      size: archive.pointer(),
+      originalFiles: req.files.map(f => ({
+        name: f.originalname,
+        size: f.size
+      })),
+      uploaderIp: req.ip
+    };
+
+    writeDB(db);
+
+    return res.json({
+      success: true,
+      uploadId,
+      token,
+      url: `https://bonkdrop.fr/${uploadId}/${token}`
+    });
+  });
+
+  archive.on("error", (err) => {
+    console.error(err);
+
+    for (const file of req.files) {
+      if (fs.existsSync(file.path)) {
+        fs.unlinkSync(file.path);
+      }
+    }
+
+    alreadyAnswered = true;
+
+    if (!res.headersSent) {
+      return res.status(500).json({
+        error: "Zip creation failed"
+      });
+    }
+  });
+
+  archive.pipe(output);
 
   for (const file of req.files) {
 
-    const token = crypto.randomBytes(16).toString("hex");
-
-    const ext = path.extname(file.originalname);
-    const filename = crypto.randomBytes(6).toString("hex") + ext;
-
-    fs.renameSync(file.path, path.join(STORAGE, filename));
-
-  if (!db[uploadId]) {
-  db[uploadId] = {
-    token,
-    createdAt: formatDate(),
-    uploaderIp: req.ip,
-    files: []
-  };
-}
-
-db[uploadId].files.push({
-  filename,
-  originalName: file.originalname,
-  size: file.size
-});
-
-    uploadedFiles.push({
-      id,
-      token,
-      url: `https://bonkdrop.fr/${id}/${token}`,
-      filename
-    });
+    archive.file(
+      file.path,
+      {
+        name: file.originalname
+      }
+    );
   }
 
-  writeDB(db);
+  archive.finalize();
 
-  return res.json({
-  success: true,
-  uploadId,
-  token,
-  url: `https://bonkdrop.fr/${uploadId}/${token}`
-});
 }
 
 // ===================== ROUTES =====================
-// accueil
-app.get("/", (req, res) => {
-  res.send("BonkDrop API OK");
-});
-
-app.get("/health", (req, res) => {
-  res.status(200).json({
-    status: "ok",
-    time: Date.now()
+  // accueil
+  app.get("/", (req, res) => {
+    res.send("BonkDrop API OK");
   });
-});
 
-// +++++++++++++++++++++ SECURITE FRONT +++++++++++++++++++++++
-
-app.post("/api/upload", upload.array("file", 1000), handleUpload);
-
-// ---------------- UPLOAD ----------------
-app.post("/api/upload", upload.array("file", 1000), handleUpload);
-
-app.post("/upload", requireApiKey, upload.array("file", 1000), handleUpload);
-
-// ---------------- DOWNLOAD ----------------
-app.get("/:id/:token", (req, res) => {
-
-  const { id, token } = req.params;
-  const db = readDB();
-  const file = db[id];
-
-  if (!file) return res.status(404).send("Not found");
-  if (file.token !== token) return res.status(403).send("Invalid token");
-
-  const filePath = path.join(STORAGE, file.filename);
-
-  if (!fs.existsSync(filePath)) return res.status(404).send("Missing file");
-
-  res.setHeader("Content-Disposition", "inline");
-  res.sendFile(path.resolve(filePath));
-});
-
-// ---------------- DELETE ----------------
-app.delete("/delete/:id/:token", (req, res) => {
-  const { id, token } = req.params;
-  const db = readDB();
-  const file = db[id];
-
-  if (!file) return res.status(404).json({ error: "Not found" });
-  if (file.token !== token) return res.status(403).json({ error: "Invalid token" });
-
-  const filePath = path.join(STORAGE, file.filename);
-
-  if (fs.existsSync(filePath)) {
-    fs.unlinkSync(filePath);
-  }
-
-  delete db[id];
-  writeDB(db);
-
-  return res.json({ success: true });
-});
-
-// ---------------- WEBHOOK ----------------
-app.post("/deploy", express.raw({ type: "*/*" }), (req, res) => {
-
-  const event = req.headers["x-github-event"];
-  if (event === "ping") return res.status(200).send("pong");
-
-  const signature = req.headers["x-hub-signature-256"];
-  if (!signature) return res.status(403).send("No signature");
-
-  const digest =
-    "sha256=" +
-    crypto.createHmac("sha256", GITHUB_SECRET).update(req.body).digest("hex");
-
-  const signatureBuffer = Buffer.from(signature);
-  const digestBuffer = Buffer.from(digest);
-
-  if (
-    signatureBuffer.length !== digestBuffer.length ||
-    !crypto.timingSafeEqual(signatureBuffer, digestBuffer)
-  ) {
-    return res.status(403).send("Invalid signature");
-  }
-
-  res.status(200).send("Deploy started");
-
-  exec("git pull origin prod && pm2 restart bonkdrop", {
-    cwd: "/home/BonkDrop/bonkdrop_site/BonkDrop-API"
+  app.get("/health", (req, res) => {
+    res.status(200).json({
+      status: "ok",
+      time: Date.now()
+    });
   });
-});
 
-// ---------------- CLEANUP ----------------
-setInterval(() => {
-  const db = readDB();
-  let changed = false;
+  // +++++++++++++++++++++ SECURITE FRONT +++++++++++++++++++++++
 
-  for (const id in db) {
-    const file = db[id];
-    const filePath = path.join(STORAGE, file.filename);
+  app.post("/api/upload", upload.array("file", 1000), handleUpload);
 
-    // supprime juste les entrées cassées
-    if (!fs.existsSync(filePath)) {
-      delete db[id];
-      changed = true;
-      console.log("Clean DB:", id);
+  // ---------------- UPLOAD ----------------
+  app.post("/upload", requireApiKey, upload.array("file", 1000), handleUpload);
+
+  // ---------------- DOWNLOAD ----------------
+  app.get("/:uploadId/:token", (req, res) => {
+    const { uploadId, token } = req.params;
+    const db = readDB();
+    const uploadData = db[uploadId];
+
+    if (!uploadData) return res.status(404).send("Upload not found");
+    if (uploadData.token !== token) return res.status(403).send("Invalid token");
+
+    const zipPath = path.join(STORAGE, uploadData.filename);
+    if (!fs.existsSync(zipPath)) return res.status(404).send("File not found");
+
+    return res.download(zipPath, `bonkdrop-${uploadId}.zip`);
+  });
+  // ---------------- DELETE ----------------
+  app.delete("/delete/:uploadId/:token", (req, res) => {
+    const { uploadId, token } = req.params;
+    const db = readDB();
+    const upload = db[uploadId];
+
+    if (!upload) return res.status(404).json({ error: "Not found" });
+    if (upload.token !== token) return res.status(403).json({ error: "Invalid token" });
+
+    const filePath = path.join(STORAGE, upload.filename);
+
+    if (fs.existsSync(filePath)) {
+      fs.unlinkSync(filePath);
     }
-  }
 
-  if (changed) writeDB(db);
+    delete db[uploadId];
+    writeDB(db);
 
-}, 60 * 60 * 1000);
+    return res.json({ success: true });
+  });
 
-app.use((err, req, res, next) => {
-  if (err instanceof multer.MulterError) {
-    if (err.code === "LIMIT_FILE_SIZE") {
-      return res.status(413).json({ error: "File too large (max 2GB)" });
+  // ---------------- WEBHOOK ----------------
+  app.post("/deploy", express.raw({ type: "*/*" }), (req, res) => {
+
+    const event = req.headers["x-github-event"];
+    if (event === "ping") return res.status(200).send("pong");
+
+    const signature = req.headers["x-hub-signature-256"];
+    if (!signature) return res.status(403).send("No signature");
+
+    const digest =
+      "sha256=" +
+      crypto.createHmac("sha256", GITHUB_SECRET).update(req.body).digest("hex");
+
+    const signatureBuffer = Buffer.from(signature);
+    const digestBuffer = Buffer.from(digest);
+
+    if (
+      signatureBuffer.length !== digestBuffer.length ||
+      !crypto.timingSafeEqual(signatureBuffer, digestBuffer)
+    ) {
+      return res.status(403).send("Invalid signature");
     }
-    if (err.code === "LIMIT_UNEXPECTED_FILE") {
-      console.error(`[ERROR] LIMIT_UNEXPECTED_FILE on ${req.path}:`, err.field, "- expected 'file'");
-      return res.status(400).json({ error: "Invalid file field, expected 'file'" });
+
+    res.status(200).send("Deploy started");
+
+    exec("git pull origin prod && pm2 restart bonkdrop", {
+      cwd: "/home/BonkDrop/bonkdrop_site/BonkDrop-API"
+    });
+  });
+
+  // ---------------- CLEANUP ----------------
+  setInterval(() => {
+    const db = readDB();
+    let changed = false;
+
+    for (const id in db) {
+      const file = db[id];
+      const filePath = path.join(STORAGE, file.filename);
+
+      // supprime juste les entrées cassées
+      if (!fs.existsSync(filePath)) {
+        delete db[id];
+        changed = true;
+        console.log("Clean DB:", id);
+      }
     }
-    return res.status(400).json({ error: err.message });
-  }
 
-  if (err && err.message === "Not allowed by CORS") {
-    return res.status(403).json({ error: "Origin not allowed" });
-  }
+    if (changed) writeDB(db);
 
-  return next(err);
-});
+  }, 60 * 60 * 1000);
 
-// ===================== START =====================
-app.listen(PORT, "0.0.0.0", () => {
-  console.log("BonkDrop API running on (api github fonctionne bien)", PORT);
-});
+  app.use((err, req, res, next) => {
+    if (err instanceof multer.MulterError) {
+      if (err.code === "LIMIT_FILE_SIZE") {
+        return res.status(413).json({ error: "File too large (max 2GB)" });
+      }
+      if (err.code === "LIMIT_UNEXPECTED_FILE") {
+        console.error(`[ERROR] LIMIT_UNEXPECTED_FILE on ${req.path}:`, err.field, "- expected 'file'");
+        return res.status(400).json({ error: "Invalid file field, expected 'file'" });
+      }
+      return res.status(400).json({ error: err.message });
+    }
+
+    if (err && err.message === "Not allowed by CORS") {
+      return res.status(403).json({ error: "Origin not allowed" });
+    }
+
+    return next(err);
+  });
+
+  // ===================== START =====================
+  app.listen(PORT, "0.0.0.0", () => {
+    console.log("BonkDrop API running on (api github fonctionne bien)", PORT);
+  });
