@@ -260,7 +260,7 @@ function handleUpload(req, res) {
     const db = readDB();
     const uploadData = db[uploadId];
 
-    if (!uploadData) return res.status(404).send("Upload not found");
+    if (!uploadData) return res.redirect("https://bonkdrop.fr/notfound.html");
     if (uploadData.token !== token) return res.status(403).send("Invalid token");
 
     const zipPath = path.join(STORAGE, uploadData.filename);
