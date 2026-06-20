@@ -9,13 +9,12 @@ const os = require("os");
 const rateLimit = require("express-rate-limit");
 const cors = require("cors");
 const dotenv = require("dotenv");
-
+const pool = require("./db");
 // ===================== ENV =====================
 dotenv.config({ path: process.env.ENV_FILE || "/home/BonkDrop/bonkdrop_backend/.env" });
 
 const app = express();
 const PORT = 3000;
-
 const API_KEY = process.env.API_KEY;
 const GITHUB_SECRET = process.env.GITHUB_SECRET;
 const CORS_ORIGINS = process.env.CORS_ORIGINS;
@@ -372,7 +371,13 @@ app.delete("/api/delete", async (req, res) => {
 });
 
 // ===================== Tests de verif de debug =====================
-
+pool.query("SELECT NOW()")
+  .then(res => {
+    console.log("PostgreSQL connecté :", res.rows[0].now);
+  })
+  .catch(err => {
+    console.error("Erreur PostgreSQL :", err);
+  });
 // ===================== START =====================
 app.listen(PORT, "0.0.0.0", () => {
   console.log("BonkDrop API running on (pareil comment t arrivé la sale fou ??? viens me dm sur discord la au lieu d'essayer de me detruire)", PORT);
