@@ -66,7 +66,6 @@ function expandHome(p) {
 
 const STORAGE = expandHome(process.env.STORAGE_PATH || path.resolve("~/bonkdrop_data/storage"));
 const TEMP = expandHome(process.env.TEMP_PATH || path.resolve("~/bonkdrop_data/temp"));
-const DB_FILE = expandHome(process.env.DB_FILE_PATH || path.resolve("~/bonkdrop_data/files.json"));
 const MAX_STORAGE = 10 * 1024 * 1024 * 1024;
 
 if (!fs.existsSync(STORAGE)) fs.mkdirSync(STORAGE, { recursive: true });
@@ -97,34 +96,8 @@ function requireApiKey(req, res, next) {
 }
 
 // ===================== DB =====================
-function readDB() {
-  if (!fs.existsSync(DB_FILE)) return {};
-  try {
-    return JSON.parse(fs.readFileSync(DB_FILE, "utf8"));
-  } catch {
-    return {};
-  }
-}
-
-function writeDB(data) {
-  fs.writeFileSync(DB_FILE, JSON.stringify(data, null, 2));
-}
-
 function generateID() {
   return crypto.randomBytes(6).toString("hex");
-}
-
-function formatDate() {
-  const now = new Date();
-
-  return now.toLocaleString("fr-FR", {
-    day: "2-digit",
-    month: "2-digit",
-    year: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit"
-  });
 }
 
 function folderSize() {
@@ -133,7 +106,7 @@ function folderSize() {
   }, 0);
 }
 
-function handleUpload(req, res) {
+async function handleUpload(req, res) {
   if (!req.files || req.files.length === 0) {
     return res.status(400).json({ error: "No files" });
   }
@@ -167,29 +140,24 @@ function handleUpload(req, res) {
 
   let alreadyAnswered = false;
 
-  output.on("close", () => {
-    if (alreadyAnswered) return;
-    alreadyAnswered = true;
-    const db = readDB();
-    for (const file of req.files) {
-      if (fs.existsSync(file.path)) {
-        fs.unlinkSync(file.path);
-      }
-    }
+  output.on("close", async () => {
+  if (alreadyAnswered) return;
+  alreadyAnswered = true;
 
-    db[uploadId] = {
-      filename: zipFilename,
-      token,
-      createdAt: formatDate(),
-      size: archive.pointer(),
-      originalFiles: req.files.map(f => ({
-        name: f.originalname,
-        size: f.size
-      })),
-      uploaderIp: req.ip
-    };
-
-    writeDB(db);
+  try {
+    await pool.query(
+      `INSERT INTO uploads
+      (id, filename, token, created_at, size, uploader_ip)
+      VALUES ($1,$2,$3,$4,$5,$6)`,
+      [
+        uploadId,
+        zipFilename,
+        token,
+        new Date(),
+        archive.pointer(),
+        req.ip
+      ]
+    );
 
     return res.json({
       success: true,
@@ -197,7 +165,19 @@ function handleUpload(req, res) {
       token,
       url: `https://bonkdrop.fr/${uploadId}/${token}`
     });
-  });
+
+  } catch (err) {
+    console.error(err);
+
+    if (fs.existsSync(zipPath)) {
+      fs.unlinkSync(zipPath);
+    }
+
+    return res.status(500).json({
+      error: "Database error"
+    });
+  }
+});
 
   archive.on("error", (err) => {
     console.error(err);
@@ -253,40 +233,73 @@ app.post("/api/upload", upload.array("file", 1000), handleUpload);
 app.post("/upload", requireApiKey, upload.array("file", 1000), handleUpload);
 
 // ---------------- DOWNLOAD ----------------
-app.get("/:uploadId/:token", (req, res) => {
+app.get("/:uploadId/:token", async (req, res) => {
   const { uploadId, token } = req.params;
-  const db = readDB();
-  const uploadData = db[uploadId];
 
-  if (!uploadData) return res.redirect("https://bonkdrop.fr/notfound.html");
-  if (uploadData.token !== token) return res.status(403).send("Invalid token");
+  const result = await pool.query(
+    "SELECT * FROM uploads WHERE id = $1",
+    [uploadId]
+  );
+
+  if (result.rows.length === 0)
+    return res.redirect("https://bonkdrop.fr/notfound.html");
+
+  const uploadData = result.rows[0];
+
+  if (uploadData.token !== token)
+    return res.status(403).send("Invalid token");
 
   const zipPath = path.join(STORAGE, uploadData.filename);
-  if (!fs.existsSync(zipPath)) return res.status(404).send("File not found");
+
+  if (!fs.existsSync(zipPath))
+    return res.status(404).send("File not found");
 
   return res.download(zipPath, `bonkdrop-${uploadId}.zip`);
 });
 // ---------------- DELETE ----------------
-app.delete("/delete/:uploadId/:token", (req, res) => {
+app.delete("/delete/:uploadId/:token", async (req, res) => {
   const { uploadId, token } = req.params;
-  const db = readDB();
-  const upload = db[uploadId];
 
-  if (!upload) return res.status(404).json({ error: "Not found" });
-  if (upload.token !== token) return res.status(403).json({ error: "Invalid token" });
+  try {
+    // Récupère l'upload dans PostgreSQL
+    const result = await pool.query(
+      "SELECT * FROM uploads WHERE id = $1",
+      [uploadId]
+    );
 
-  const filePath = path.join(STORAGE, upload.filename);
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: "Not found" });
+    }
 
-  if (fs.existsSync(filePath)) {
-    fs.unlinkSync(filePath);
+    const upload = result.rows[0];
+
+    // Vérifie le token
+    if (upload.token !== token) {
+      return res.status(403).json({ error: "Invalid token" });
+    }
+
+    // Supprime le fichier ZIP
+    const filePath = path.join(STORAGE, upload.filename);
+
+    if (fs.existsSync(filePath)) {
+      fs.unlinkSync(filePath);
+    }
+
+    // Supprime l'entrée de la base
+    await pool.query(
+      "DELETE FROM uploads WHERE id = $1",
+      [uploadId]
+    );
+
+    return res.json({ success: true });
+
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({
+      error: "Internal server error"
+    });
   }
-
-  delete db[uploadId];
-  writeDB(db);
-
-  return res.json({ success: true });
 });
-
 // ---------------- WEBHOOK ----------------
 app.post("/deploy", express.raw({ type: "*/*" }), (req, res) => {
 
@@ -318,26 +331,6 @@ app.post("/deploy", express.raw({ type: "*/*" }), (req, res) => {
 });
 
 // ---------------- CLEANUP ----------------
-setInterval(() => {
-  const db = readDB();
-  let changed = false;
-
-  for (const id in db) {
-    const file = db[id];
-    const filePath = path.join(STORAGE, file.filename);
-
-    // supprime juste les entrées cassées
-    if (!fs.existsSync(filePath)) {
-      delete db[id];
-      changed = true;
-      console.log("Clean DB:", id);
-    }
-  }
-
-  if (changed) writeDB(db);
-
-}, 60 * 60 * 1000);
-
 app.use((err, req, res, next) => {
   if (err instanceof multer.MulterError) {
     if (err.code === "LIMIT_FILE_SIZE") {
@@ -356,29 +349,9 @@ app.use((err, req, res, next) => {
 
   return next(err);
 });
-
-// ======================== Route api delete =========================
-
-app.delete("/api/delete", async (req, res) => {
-    const { uploadId, token } = req.body;
-
-    console.log(uploadId);
-    console.log(token);
-
-    res.json({
-        success: true
-    });
-});
-
 // ===================== Tests de verif de debug =====================
-pool.query("SELECT NOW()")
-  .then(res => {
-    console.log("PostgreSQL connecté :", res.rows[0].now);
-  })
-  .catch(err => {
-    console.error("Erreur PostgreSQL :", err);
-  });
+
 // ===================== START =====================
 app.listen(PORT, "0.0.0.0", () => {
-  console.log("BonkDrop API running on (pareil comment t arrivé la sale fou ??? viens me dm sur discord la au lieu d'essayer de me detruire)", PORT);
+  console.log("BonkDrop API online sur le port (pareil pk tu lances le serv ??? viens m'aider la au lieu de faire jsp quoi la ca se voit en plus t chaud)", PORT);
 });
