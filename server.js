@@ -10,6 +10,8 @@ const rateLimit = require("express-rate-limit");
 const cors = require("cors");
 const dotenv = require("dotenv");
 const pool = require("./db");
+const bcrypt = require("bcrypt");
+const jwt = require("jsonwebtoken");
 // ===================== ENV =====================
 dotenv.config({ path: process.env.ENV_FILE || "/home/BonkDrop/bonkdrop_backend/.env" });
 
@@ -354,6 +356,56 @@ app.use((err, req, res, next) => {
 
   return next(err);
 });
+
+// ========================== Comptes ===========================
+
+app.post("/auth/register", async (req, res) => {
+  const { username, email, password } = req.body;
+
+  if (!username || !email || !password) {
+    return res.status(400).json({
+      error: "Missing fields"
+    });
+  }
+
+  try {
+    const exists = await pool.query(
+      "SELECT id FROM users WHERE email = $1 OR username = $2",
+      [email, username]
+    );
+
+    if (exists.rows.length > 0) {
+      return res.status(409).json({
+        error: "User already exists"
+      });
+    }
+
+    const hash = await bcrypt.hash(password, 12);
+
+    await pool.query(
+      `INSERT INTO users
+      (username, email, password_hash)
+      VALUES ($1,$2,$3)`,
+      [
+        username,
+        email,
+        hash
+      ]
+    );
+
+    return res.json({
+      success: true
+    });
+
+  } catch (err) {
+    console.error(err);
+
+    return res.status(500).json({
+      error: "Internal server error"
+    });
+  }
+});
+
 // ===================== Tests de verif de debug =====================
 
 // ===================== START =====================
