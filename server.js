@@ -530,6 +530,14 @@ app.get("/auth/me", async (req, res) => {
 
 });
 
+//============ Logout ====================
+
+app.post("/auth/logout", (req, res) => {
+  return res.json({
+    success: true
+  });
+});
+
 // ---------------- CLEANUP ----------------
 app.use((err, req, res, next) => {
   if (err instanceof multer.MulterError) {
