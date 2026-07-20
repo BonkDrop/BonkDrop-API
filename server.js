@@ -486,6 +486,90 @@ app.post("/auth/login", async (req, res) => {
 
 });
 
+// ======================== detecte l'user ===========================
+
+app.get("/auth/me", async (req, res) => {
+
+  const auth = req.headers.authorization;
+
+  if (!auth) {
+    return res.status(401).json({
+      error: "Manque le token"
+    });
+  }
+
+
+  const token = auth.split(" ")[1];
+
+
+  if (!token) {
+    return res.status(401).json({
+      error: "Invalid token"
+    });
+  }
+
+
+  try {
+    const session = await pool.query(
+      `
+      SELECT user_id
+      FROM sessions
+      WHERE token = $1
+      AND expires_at > NOW()
+      `,
+      [token]
+    );
+
+
+    if (session.rows.length === 0) {
+      return res.status(401).json({
+        error: "Session expirée"
+      });
+    }
+
+
+    const user = await pool.query(
+      `
+      SELECT
+        id,
+        username,
+        email,
+        avatar_url,
+        provider,
+        email_verified,
+        created_at
+      FROM users
+      WHERE id = $1
+      `,
+      [session.rows[0].user_id]
+    );
+
+
+    if (user.rows.length === 0) {
+      return res.status(404).json({
+        error: "Utilisateur non trouvé"
+      });
+    }
+
+
+    return res.json({
+      success: true,
+      user: user.rows[0]
+    });
+
+
+  } catch (err) {
+
+    console.error(err);
+
+    return res.status(500).json({
+      error: "Erreur interne du serveur"
+    });
+
+  }
+
+});
+
 // ===================== Tests de verif de debug =====================
 
 // ===================== START =====================
