@@ -240,7 +240,7 @@ app.post("/api/upload", upload.array("file", 1000), handleUpload);
 app.post("/upload", requireApiKey, upload.array("file", 1000), handleUpload);
 
 // ---------------- DOWNLOAD ----------------
-app.get("/:uploadId/:token", async (req, res) => {
+app.get("/:uploadId([a-f0-9]{12})/:token", async (req, res) => {
   const { uploadId, token } = req.params;
 
   const result = await pool.query(
