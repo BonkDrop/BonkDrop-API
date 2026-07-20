@@ -19,9 +19,10 @@ const app = express();
 const PORT = 3000;
 const API_KEY = process.env.API_KEY;
 const GITHUB_SECRET = process.env.GITHUB_SECRET;
+const JWT_SECRET = process.env.JWT_SECRET;
 const CORS_ORIGINS = process.env.CORS_ORIGINS;
 
-if (!API_KEY || !GITHUB_SECRET) {
+if (!API_KEY || !GITHUB_SECRET || !JWT_SECRET) {
   console.error("Missing env vars");
   process.exit(1);
 }
@@ -240,8 +241,9 @@ app.post("/api/upload", upload.array("file", 1000), handleUpload);
 app.post("/upload", requireApiKey, upload.array("file", 1000), handleUpload);
 
 // ---------------- DOWNLOAD ----------------
-app.get("/:uploadId{[a-f0-9]{12}}/:token", async (req, res) => {
-  const { uploadId, token } = req.params;
+app.get(/^\/([a-f0-9]{12})\/([^/]+)$/, async (req, res) => {
+  const uploadId = req.params[0];
+  const token = req.params[1];
 
   const result = await pool.query(
     "SELECT * FROM uploads WHERE id = $1",
@@ -263,6 +265,7 @@ app.get("/:uploadId{[a-f0-9]{12}}/:token", async (req, res) => {
 
   return res.download(zipPath, `bonkdrop-${uploadId}.zip`);
 });
+
 // ---------------- DELETE ----------------
 app.delete("/delete/:uploadId/:token", async (req, res) => {
   const { uploadId, token } = req.params;
@@ -335,26 +338,6 @@ app.post("/deploy", express.raw({ type: "*/*" }), (req, res) => {
   exec("git pull origin prod && pm2 restart bonkdrop", {
     cwd: "/home/BonkDrop/bonkdrop_site/BonkDrop-API"
   });
-});
-
-// ---------------- CLEANUP ----------------
-app.use((err, req, res, next) => {
-  if (err instanceof multer.MulterError) {
-    if (err.code === "LIMIT_FILE_SIZE") {
-      return res.status(413).json({ error: "File too large (max 2GB)" });
-    }
-    if (err.code === "LIMIT_UNEXPECTED_FILE") {
-      console.error(`[ERROR] LIMIT_UNEXPECTED_FILE on ${req.path}:`, err.field, "- expected 'file'");
-      return res.status(400).json({ error: "Invalid file field, expected 'file'" });
-    }
-    return res.status(400).json({ error: err.message });
-  }
-
-  if (err && err.message === "Not allowed by CORS") {
-    return res.status(403).json({ error: "Origin not allowed" });
-  }
-
-  return next(err);
 });
 
 // ========================== Comptes ===========================
@@ -447,24 +430,16 @@ app.post("/auth/login", async (req, res) => {
       });
     }
 
-    const token = crypto.randomBytes(48).toString("hex");
-
-    const expires = new Date();
-
-    expires.setDate(
-      expires.getDate() + 30
-    );
-
-
-    await pool.query(
-      `INSERT INTO sessions
-      (token, user_id, expires_at)
-      VALUES ($1,$2,$3)`,
-      [
-        token,
-        user.id,
-        expires
-      ]
+    const token = jwt.sign(
+      {
+        userId: user.id,
+        email: user.email,
+        username: user.username
+      },
+      JWT_SECRET,
+      {
+        expiresIn: "30d"
+      }
     );
 
 
@@ -510,22 +485,7 @@ app.get("/auth/me", async (req, res) => {
 
 
   try {
-    const session = await pool.query(
-      `
-      SELECT user_id
-      FROM sessions
-      WHERE token = $1
-      AND expires_at > NOW()
-      `,
-      [token]
-    );
-
-
-    if (session.rows.length === 0) {
-      return res.status(401).json({
-        error: "Session expirée"
-      });
-    }
+    const payload = jwt.verify(token, JWT_SECRET);
 
 
     const user = await pool.query(
@@ -541,7 +501,7 @@ app.get("/auth/me", async (req, res) => {
       FROM users
       WHERE id = $1
       `,
-      [session.rows[0].user_id]
+      [payload.userId]
     );
 
 
@@ -570,7 +530,25 @@ app.get("/auth/me", async (req, res) => {
 
 });
 
-// ===================== Tests de verif de debug =====================
+// ---------------- CLEANUP ----------------
+app.use((err, req, res, next) => {
+  if (err instanceof multer.MulterError) {
+    if (err.code === "LIMIT_FILE_SIZE") {
+      return res.status(413).json({ error: "File too large (max 2GB)" });
+    }
+    if (err.code === "LIMIT_UNEXPECTED_FILE") {
+      console.error(`[ERROR] LIMIT_UNEXPECTED_FILE on ${req.path}:`, err.field, "- expected 'file'");
+      return res.status(400).json({ error: "Invalid file field, expected 'file'" });
+    }
+    return res.status(400).json({ error: err.message });
+  }
+
+  if (err && err.message === "Not allowed by CORS") {
+    return res.status(403).json({ error: "Origin not allowed" });
+  }
+
+  return next(err);
+});
 
 // ===================== START =====================
 app.listen(PORT, "0.0.0.0", () => {
