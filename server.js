@@ -145,20 +145,25 @@ async function handleUpload(req, res) {
   alreadyAnswered = true;
 
   try {
-    await pool.query(
-      `INSERT INTO uploads
-      (id, filename, token, created_at, size, uploader_ip)
-      VALUES ($1,$2,$3,$4,$5,$6)`,
-      [
-        uploadId,
-        zipFilename,
-        token,
-        new Date(),
-        archive.pointer(),
-        req.ip
-      ]
-    );
+const originalFiles = req.files.map(file => ({
+  name: file.originalname,
+  size: file.size
+}));
 
+await pool.query(
+  `INSERT INTO uploads
+  (id, filename, token, created_at, size, uploader_ip, original_files)
+  VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+  [
+    uploadId,
+    zipFilename,
+    token,
+    new Date(),
+    archive.pointer(),
+    req.ip,
+    JSON.stringify(originalFiles)
+  ]
+);
     return res.json({
       success: true,
       uploadId,
