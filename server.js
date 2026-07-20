@@ -143,48 +143,48 @@ async function handleUpload(req, res) {
   let alreadyAnswered = false;
 
   output.on("close", async () => {
-  if (alreadyAnswered) return;
-  alreadyAnswered = true;
+    if (alreadyAnswered) return;
+    alreadyAnswered = true;
 
-  try {
-const originalFiles = req.files.map(file => ({
-  name: file.originalname,
-  size: file.size
-}));
+    try {
+      const originalFiles = req.files.map(file => ({
+        name: file.originalname,
+        size: file.size
+      }));
 
-await pool.query(
-  `INSERT INTO uploads
+      await pool.query(
+        `INSERT INTO uploads
   (id, filename, token, created_at, size, uploader_ip, original_files)
   VALUES ($1,$2,$3,$4,$5,$6,$7)`,
-  [
-    uploadId,
-    zipFilename,
-    token,
-    new Date(),
-    archive.pointer(),
-    req.ip,
-    JSON.stringify(originalFiles)
-  ]
-);
-    return res.json({
-      success: true,
-      uploadId,
-      token,
-      url: `https://bonkdrop.fr/${uploadId}/${token}`
-    });
+        [
+          uploadId,
+          zipFilename,
+          token,
+          new Date(),
+          archive.pointer(),
+          req.ip,
+          JSON.stringify(originalFiles)
+        ]
+      );
+      return res.json({
+        success: true,
+        uploadId,
+        token,
+        url: `https://bonkdrop.fr/${uploadId}/${token}`
+      });
 
-  } catch (err) {
-    console.error(err);
+    } catch (err) {
+      console.error(err);
 
-    if (fs.existsSync(zipPath)) {
-      fs.unlinkSync(zipPath);
+      if (fs.existsSync(zipPath)) {
+        fs.unlinkSync(zipPath);
+      }
+
+      return res.status(500).json({
+        error: "Database error"
+      });
     }
-
-    return res.status(500).json({
-      error: "Database error"
-    });
-  }
-});
+  });
 
   archive.on("error", (err) => {
     console.error(err);
@@ -358,13 +358,13 @@ app.use((err, req, res, next) => {
 });
 
 // ========================== Comptes ===========================
-
+// ========================= register ===========================
 app.post("/auth/register", async (req, res) => {
   const { username, email, password } = req.body;
 
   if (!username || !email || !password) {
     return res.status(400).json({
-      error: "Missing fields"
+      error: "Champs manquants"
     });
   }
 
@@ -376,7 +376,7 @@ app.post("/auth/register", async (req, res) => {
 
     if (exists.rows.length > 0) {
       return res.status(409).json({
-        error: "User already exists"
+        error: "Utilisateur déjà existant"
       });
     }
 
@@ -401,9 +401,89 @@ app.post("/auth/register", async (req, res) => {
     console.error(err);
 
     return res.status(500).json({
-      error: "Internal server error"
+      error: "Erreur interne du serveur"
     });
   }
+});
+
+// ========================= login ===========================
+app.post("/auth/login", async (req, res) => {
+
+  const { email, password } = req.body;
+
+  if (!email || !password) {
+    return res.status(400).json({
+      error: "Il manque l'email ou le mot de passe"
+    });
+  }
+
+
+  try {
+
+    const result = await pool.query(
+      "SELECT * FROM users WHERE email = $1",
+      [email]
+    );
+
+
+    if (result.rows.length === 0) {
+      return res.status(401).json({
+        error: "Identifiants invalides"
+      });
+    }
+
+
+    const user = result.rows[0];
+
+    const valid = await bcrypt.compare(
+      password,
+      user.password_hash
+    );
+
+
+    if (!valid) {
+      return res.status(401).json({
+        error: "Identifiants invalides"
+      });
+    }
+
+    const token = crypto.randomBytes(48).toString("hex");
+
+    const expires = new Date();
+
+    expires.setDate(
+      expires.getDate() + 30
+    );
+
+
+    await pool.query(
+      `INSERT INTO sessions
+      (token, user_id, expires_at)
+      VALUES ($1,$2,$3)`,
+      [
+        token,
+        user.id,
+        expires
+      ]
+    );
+
+
+    return res.json({
+      success: true,
+      token
+    });
+
+
+  } catch (err) {
+
+    console.error(err);
+
+    return res.status(500).json({
+      error: "Erreur interne du serveur"
+    });
+
+  }
+
 });
 
 // ===================== Tests de verif de debug =====================
