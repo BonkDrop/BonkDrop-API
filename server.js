@@ -559,6 +559,18 @@ app.put("/auth/change-password", async (req, res) => {
     });
   }
 
+  if (oldPassword === newPassword) {
+    return res.status(400).json({
+      error: "Le nouveau mot de passe doit être différent"
+    });
+  }
+
+  if (newPassword.length < 8) {
+    return res.status(400).json({
+      error: "Mot de passe trop court"
+    });
+  }
+
   let payload;
 
   try {
@@ -595,6 +607,15 @@ app.put("/auth/change-password", async (req, res) => {
       success: true
     });
   } catch (err) {
+    if (
+      err.name === "JsonWebTokenError" ||
+      err.name === "TokenExpiredError"
+    ) {
+      return res.status(401).json({
+        error: "Token invalide"
+      });
+    }
+
     console.error(err);
 
     return res.status(500).json({
@@ -602,18 +623,81 @@ app.put("/auth/change-password", async (req, res) => {
     });
   }
 
-  if (oldPassword === newPassword) {
-    return res.status(400).json({
-      error: "Le nouveau mot de passe doit être différent"
+});
+
+// ================ supp de compte ====================
+app.delete("/auth/delete-account", async (req, res) => {
+  const auth = req.headers.authorization;
+
+  if (!auth) {
+    return res.status(401).json({
+      error: "Manque le token"
     });
   }
 
-  if (newPassword.length < 8) {
-    return res.status(400).json({
-      error: "Mot de passe trop court"
+  const token = auth.split(" ")[1];
+
+  if (!token) {
+    return res.status(401).json({
+      error: "Token invalide"
     });
   }
 
+  const { password } = req.body;
+
+  if (!password) {
+    return res.status(400).json({
+      error: "Mot de passe manquant"
+    });
+  }
+
+  try {
+    const payload = jwt.verify(token, JWT_SECRET);
+
+    const result = await pool.query(
+      "SELECT password_hash FROM users WHERE id = $1",
+      [payload.userId]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({
+        error: "Utilisateur introuvable"
+      });
+    }
+
+    const user = result.rows[0];
+    const validPassword = await bcrypt.compare(password, user.password_hash);
+
+    if (!validPassword) {
+      return res.status(401).json({
+        error: "Mot de passe incorrect"
+      });
+    }
+
+    await pool.query(
+      "DELETE FROM users WHERE id = $1",
+      [payload.userId]
+    );
+
+    return res.json({
+      success: true
+    });
+  } catch (err) {
+    if (
+      err.name === "JsonWebTokenError" ||
+      err.name === "TokenExpiredError"
+    ) {
+      return res.status(401).json({
+        error: "Token invalide"
+      });
+    }
+
+    console.error(err);
+
+    return res.status(500).json({
+      error: "Erreur interne du serveur"
+    });
+  }
 });
 
 // ---------------- CLEANUP ----------------
