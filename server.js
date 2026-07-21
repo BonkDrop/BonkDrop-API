@@ -538,6 +538,77 @@ app.post("/auth/logout", (req, res) => {
   });
 });
 
+// ================ oubli de mdp ====================
+app.put("/auth/change-password", async (req, res) => {
+  const auth = req.headers.authorization;
+
+  if (!auth) {
+    return res.status(401).json({
+      error: "Manque le token"
+    });
+  }
+
+  const token = auth.split(" ")[1];
+
+  if (!token) {
+    return res.status(401).json({
+      error: "Token invalide"
+    });
+  }
+
+  const { oldPassword, newPassword } = req.body;
+
+  if (!oldPassword || !newPassword) {
+    return res.status(400).json({
+      error: "Champs manquants"
+    });
+  }
+
+  let payload;
+
+  try {
+    payload = jwt.verify(token, JWT_SECRET);
+
+    const result = await pool.query(
+      "SELECT password_hash FROM users WHERE id = $1",
+      [payload.userId]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({
+        error: "Utilisateur introuvable"
+      });
+    }
+
+    const user = result.rows[0];
+    const validPassword = await bcrypt.compare(oldPassword, user.password_hash);
+
+    if (!validPassword) {
+      return res.status(401).json({
+        error: "Mot de passe actuel incorrect"
+      });
+    }
+
+    const newHash = await bcrypt.hash(newPassword, 12);
+
+    await pool.query(
+      "UPDATE users SET password_hash = $1 WHERE id = $2",
+      [newHash, payload.userId]
+    );
+
+    return res.json({
+      success: true
+    });
+  } catch (err) {
+    console.error(err);
+
+    return res.status(500).json({
+      error: "Erreur interne du serveur"
+    });
+  }
+
+});
+
 // ---------------- CLEANUP ----------------
 app.use((err, req, res, next) => {
   if (err instanceof multer.MulterError) {
