@@ -55,7 +55,6 @@ app.use(rateLimit({
   max: 60
 }));
 
-// JSON sauf webhook
 app.use((req, res, next) => {
   if (req.path === "/deploy") return next();
   express.json()(req, res, next);
@@ -222,7 +221,6 @@ async function handleUpload(req, res) {
 }
 
 // ===================== ROUTES =====================
-// accueil
 app.get("/", (req, res) => {
   res.send("API BonkDrop online mais kestufous la ? si tu veux tester l'upload, va sur <a href=\"https://bonkdrop.fr\">BonkDrop</a> mais si tu t'y connais va faire une pr sur le repo au lieu de te balader ici ~~");
 });
@@ -271,7 +269,6 @@ app.delete("/delete/:uploadId/:token", async (req, res) => {
   const { uploadId, token } = req.params;
 
   try {
-    // Récupère l'upload dans PostgreSQL
     const result = await pool.query(
       "SELECT * FROM uploads WHERE id = $1",
       [uploadId]
@@ -283,19 +280,14 @@ app.delete("/delete/:uploadId/:token", async (req, res) => {
 
     const upload = result.rows[0];
 
-    // Vérifie le token
     if (upload.token !== token) {
       return res.status(403).json({ error: "Invalid token" });
     }
-
-    // Supprime le fichier ZIP
     const filePath = path.join(STORAGE, upload.filename);
 
     if (fs.existsSync(filePath)) {
       fs.unlinkSync(filePath);
     }
-
-    // Supprime l'entrée de la base
     await pool.query(
       "DELETE FROM uploads WHERE id = $1",
       [uploadId]
@@ -340,7 +332,6 @@ app.post("/deploy", express.raw({ type: "*/*" }), (req, res) => {
   });
 });
 
-// ========================== Comptes ===========================
 // ========================= register ===========================
 app.post("/auth/register", async (req, res) => {
   const { username, email, password } = req.body;
@@ -519,13 +510,17 @@ app.get("/auth/me", async (req, res) => {
 
 
   } catch (err) {
+    if (err.name === "JsonWebTokenError" || err.name === "TokenExpiredError") {
+      return res.status(401).json({
+        error: "Token invalide"
+      });
+    }
 
     console.error(err);
 
     return res.status(500).json({
       error: "Erreur interne du serveur"
     });
-
   }
 
 });
@@ -604,6 +599,18 @@ app.put("/auth/change-password", async (req, res) => {
 
     return res.status(500).json({
       error: "Erreur interne du serveur"
+    });
+  }
+
+  if (oldPassword === newPassword) {
+    return res.status(400).json({
+      error: "Le nouveau mot de passe doit être différent"
+    });
+  }
+
+  if (newPassword.length < 8) {
+    return res.status(400).json({
+      error: "Mot de passe trop court"
     });
   }
 
