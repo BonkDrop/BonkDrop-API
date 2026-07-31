@@ -12,15 +12,20 @@ const dotenv = require("dotenv");
 const pool = require("./db");
 const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
+const passport = require("passport");
 // ===================== ENV =====================
 dotenv.config({ path: process.env.ENV_FILE || "/home/BonkDrop/bonkdrop_backend/.env" });
+require("./passport");
 
 const app = express();
+app.use(passport.initialize());
+
 const PORT = 3000;
 const API_KEY = process.env.API_KEY;
 const GITHUB_SECRET = process.env.GITHUB_SECRET;
 const JWT_SECRET = process.env.JWT_SECRET;
 const CORS_ORIGINS = process.env.CORS_ORIGINS;
+const GOOGLE_AUTH_SUCCESS_URL = process.env.GOOGLE_AUTH_SUCCESS_URL || "https://bonkdrop.fr/login/success";
 
 if (!API_KEY || !GITHUB_SECRET || !JWT_SECRET) {
   console.error("Missing env vars");
@@ -108,6 +113,16 @@ function folderSize() {
   }, 0);
 }
 
+function cleanupTempFiles(files) {
+  if (!Array.isArray(files)) return;
+
+  for (const file of files) {
+    if (file?.path && fs.existsSync(file.path)) {
+      fs.unlink(file.path, () => {});
+    }
+  }
+}
+
 async function handleUpload(req, res) {
   if (!req.files || req.files.length === 0) {
     return res.status(400).json({ error: "No files" });
@@ -183,17 +198,15 @@ async function handleUpload(req, res) {
       return res.status(500).json({
         error: "Database error"
       });
+    } finally {
+      cleanupTempFiles(req.files);
     }
   });
 
   archive.on("error", (err) => {
     console.error(err);
 
-    for (const file of req.files) {
-      if (fs.existsSync(file.path)) {
-        fs.unlinkSync(file.path);
-      }
-    }
+    cleanupTempFiles(req.files);
 
     alreadyAnswered = true;
 
@@ -335,20 +348,50 @@ app.post("/deploy", express.raw({ type: "*/*" }), (req, res) => {
 // ========================= register ===========================
 app.post("/auth/register", async (req, res) => {
   const { username, email, password } = req.body;
+  const normalizedEmail = typeof email === "string" ? email.toLowerCase() : email;
 
-  if (!username || !email || !password) {
+  if (!username || !normalizedEmail || !password) {
     return res.status(400).json({
       error: "Champs manquants"
     });
   }
 
+  if (!/^[a-zA-Z0-9_]{3,20}$/.test(username)) {
+    return res.status(400).json({
+      error: "Nom d'utilisateur invalide"
+    });
+  }
+
+  if (password.length < 8) {
+    return res.status(400).json({
+      error: "Mot de passe trop court"
+    });
+  }
+
   try {
     const exists = await pool.query(
-      "SELECT id FROM users WHERE email = $1 OR username = $2",
-      [email, username]
+      `SELECT
+        id,
+        email,
+        username,
+        provider,
+        provider_id
+      FROM users
+      WHERE email = $1 OR username = $2`,
+      [normalizedEmail, username]
     );
 
     if (exists.rows.length > 0) {
+      const emailExistsWithGoogle = exists.rows.some((row) => {
+        return row.email === normalizedEmail && row.provider === "google" && row.provider_id;
+      });
+
+      if (emailExistsWithGoogle) {
+        return res.status(409).json({
+          error: "Compte déjà existant. Connectez-vous avec Google."
+        });
+      }
+
       return res.status(409).json({
         error: "Utilisateur déjà existant"
       });
@@ -362,7 +405,7 @@ app.post("/auth/register", async (req, res) => {
       VALUES ($1,$2,$3)`,
       [
         username,
-        email,
+        normalizedEmail,
         hash
       ]
     );
@@ -384,8 +427,9 @@ app.post("/auth/register", async (req, res) => {
 app.post("/auth/login", async (req, res) => {
 
   const { email, password } = req.body;
+  const normalizedEmail = typeof email === "string" ? email.toLowerCase() : email;
 
-  if (!email || !password) {
+  if (!normalizedEmail || !password) {
     return res.status(400).json({
       error: "Il manque l'email ou le mot de passe"
     });
@@ -396,7 +440,7 @@ app.post("/auth/login", async (req, res) => {
 
     const result = await pool.query(
       "SELECT * FROM users WHERE email = $1",
-      [email]
+      [normalizedEmail]
     );
 
 
@@ -408,6 +452,12 @@ app.post("/auth/login", async (req, res) => {
 
 
     const user = result.rows[0];
+
+    if (user.provider === "google" && user.provider_id) {
+      return res.status(400).json({
+        error: "Connectez-vous avec Google."
+      });
+    }
 
     const valid = await bcrypt.compare(
       password,
@@ -577,7 +627,7 @@ app.put("/auth/change-password", async (req, res) => {
     payload = jwt.verify(token, JWT_SECRET);
 
     const result = await pool.query(
-      "SELECT password_hash FROM users WHERE id = $1",
+      "SELECT password_hash, provider FROM users WHERE id = $1",
       [payload.userId]
     );
 
@@ -588,6 +638,13 @@ app.put("/auth/change-password", async (req, res) => {
     }
 
     const user = result.rows[0];
+
+    if (user.provider === "google") {
+      return res.status(400).json({
+        error: "Ce compte utilise Google."
+      });
+    }
+
     const validPassword = await bcrypt.compare(oldPassword, user.password_hash);
 
     if (!validPassword) {
@@ -645,17 +702,11 @@ app.delete("/auth/delete-account", async (req, res) => {
 
   const { password } = req.body;
 
-  if (!password) {
-    return res.status(400).json({
-      error: "Mot de passe manquant"
-    });
-  }
-
   try {
     const payload = jwt.verify(token, JWT_SECRET);
 
     const result = await pool.query(
-      "SELECT password_hash FROM users WHERE id = $1",
+      "SELECT password_hash, provider FROM users WHERE id = $1",
       [payload.userId]
     );
 
@@ -666,6 +717,24 @@ app.delete("/auth/delete-account", async (req, res) => {
     }
 
     const user = result.rows[0];
+
+    if (user.provider === "google") {
+      await pool.query(
+        "DELETE FROM users WHERE id = $1",
+        [payload.userId]
+      );
+
+      return res.json({
+        success: true
+      });
+    }
+
+    if (!password) {
+      return res.status(400).json({
+        error: "Mot de passe manquant"
+      });
+    }
+
     const validPassword = await bcrypt.compare(password, user.password_hash);
 
     if (!validPassword) {
@@ -700,6 +769,50 @@ app.delete("/auth/delete-account", async (req, res) => {
   }
 });
 
+// ================== passport google auth2o =========================
+
+app.get(
+  "/auth/google",
+  passport.authenticate("google", {
+    scope: ["profile", "email"]
+  })
+);
+
+app.get(
+  "/auth/google/callback",
+  passport.authenticate("google", {
+    session: false,
+    failureRedirect: "/login"
+  }),
+  (req, res) => {
+    const token = jwt.sign(
+      {
+        userId: req.user.id,
+        email: req.user.email,
+        username: req.user.username
+      },
+      JWT_SECRET,
+      {
+        expiresIn: "30d"
+      }
+    );
+
+    const wantsJson = req.query.format === "json"
+      || (typeof req.headers.accept === "string" && req.headers.accept.includes("application/json"));
+
+    if (wantsJson) {
+      return res.json({
+        success: true,
+        token,
+        user: req.user
+      });
+    }
+
+    const separator = GOOGLE_AUTH_SUCCESS_URL.includes("?") ? "&" : "?";
+    return res.redirect(`${GOOGLE_AUTH_SUCCESS_URL}${separator}token=${encodeURIComponent(token)}`);
+  }
+);
+
 // ---------------- CLEANUP ----------------
 app.use((err, req, res, next) => {
   if (err instanceof multer.MulterError) {
@@ -722,5 +835,5 @@ app.use((err, req, res, next) => {
 
 // ===================== START =====================
 app.listen(PORT, "0.0.0.0", () => {
-  console.log("BonkDrop API online sur le port (pareil pk tu lances le serv ??? viens m'aider la au lieu de faire jsp quoi la ca se voit en plus t chaud)", PORT);
+  console.log("BonkDrop API online sur le port", PORT);
 });
