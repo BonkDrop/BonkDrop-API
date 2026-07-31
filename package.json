@@ -23,5 +23,8 @@
     "passport-google-oauth20": "^2.0.0",
     "pg": "^8.22.0",
     "session": "^0.1.0"
+  },
+  "overrides": {
+    "brace-expansion": "^2.0.1"
   }
 }
